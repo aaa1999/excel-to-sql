@@ -8,7 +8,7 @@
 import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QEvent, QSettings, Qt
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPushButton, QRadioButton, QSplitter,
@@ -129,7 +129,13 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
+        self.tabs.setUsesScrollButtons(True)   # 超出部分由左右箭头滚动展示
+        self.tabs.setElideMode(Qt.ElideRight)  # 标签名过长省略号截断
         self.tabs.tabCloseRequested.connect(lambda i: self.tabs.removeTab(i))
+        # 打开的记录最多同时展示 3 个：标签宽度锁定为标签栏 1/3（随窗口自适应）
+        self._tab_width_lock = False
+        self._last_tab_width = 0
+        self.tabs.tabBar().installEventFilter(self)
 
         right_layout = QVBoxLayout()
         right_layout.addWidget(self._build_search_box())
@@ -183,6 +189,27 @@ class MainWindow(QMainWindow):
         group.setLayout(box)
         self._add_cond_row()
         return group
+
+    def eventFilter(self, obj, event):
+        if obj is self.tabs.tabBar() and event.type() == QEvent.Resize:
+            self._apply_tab_width()
+        return super().eventFilter(obj, event)
+
+    def _apply_tab_width(self):
+        """标签宽度 = 标签栏宽度 / 3：任何窗口宽度下最多同时可见 3 个标签。
+
+        第 4 个起 QTabBar 自带的左右滚动箭头生效。
+        """
+        if self._tab_width_lock:
+            return
+        width = max(160, self.tabs.tabBar().width() // 3 - 2)
+        if width == self._last_tab_width:
+            return
+        self._last_tab_width = width
+        self._tab_width_lock = True
+        self.tabs.setStyleSheet(
+            "QTabBar::tab { min-width: %dpx; max-width: %dpx; }" % (width, width))
+        self._tab_width_lock = False
 
     # ---------- 数据库 ----------
 

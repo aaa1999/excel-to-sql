@@ -42,8 +42,19 @@ def main():
         entry = win.cond_rows[0]
         entry["col"].setCurrentText("商品名称")
         entry["op"].setCurrentIndex(entry["op"].findData("contains"))
-        entry["value"].setText("手机")
-        win._do_search()
+        for value in ("手机", "键盘", "显示器"):   # 连续 3 次搜索 → 3 个结果标签
+            entry["value"].setText(value)
+            win._do_search()
+        QTimer.singleShot(300, step_open_second_table)
+
+    def step_open_second_table():
+        # 选中客户表 → 再开一个「全部数据」标签（共 5 个标签，演示最多显示 3 个）
+        tree = win.catalog
+        for i in range(tree.topLevelItemCount()):
+            g = tree.topLevelItem(i)
+            for j in range(g.childCount()):
+                if g.child(j).text(0) == "客户表":
+                    tree.setCurrentItem(g.child(j))
         QTimer.singleShot(600, step_shoot)
 
     def step_shoot():
