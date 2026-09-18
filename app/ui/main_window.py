@@ -269,6 +269,24 @@ class MainWindow(QMainWindow):
             return
 
         combine = "AND" if self.and_radio.isChecked() else "OR"
+
+        # 跨表查找预检：范围内多张子表时要求表头结构（列名+类型）完全一致
+        if len(scope) > 1:
+            ok, ref, offenders = db_browser.check_same_structure(self.conn, scope)
+            if not ok:
+                ref_cols = "、".join(n for n, _t in db_browser.table_structure(
+                    self.conn, ref)) or "（无列）"
+                diff_lines = "\n".join(
+                    "  · %s：%s" % (t, "、".join(n for n, _t in struct) or "（无列）")
+                    for t, struct in offenders)
+                QMessageBox.warning(
+                    self, "不能跨表查找",
+                    "所选范围的 %d 张子表表头结构不一致，不能一起查找。\n\n"
+                    "参考结构（%s）：\n  %s\n\n结构不一致的子表：\n%s\n\n"
+                    "请调整勾选范围，只保留结构相同的子表（单表查找不受影响）。"
+                    % (len(scope), ref, ref_cols, diff_lines))
+                return
+
         self.result_seq += 1
         seq = self.result_seq
         mark = chr(0x2460 + seq - 1) if seq <= 20 else str(seq)

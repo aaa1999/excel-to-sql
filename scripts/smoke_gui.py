@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.core import library  # noqa: E402
@@ -36,18 +37,30 @@ def main():
     win.catalog.setCurrentItem(child)
     print("首表标签页:", win.tabs.tabText(0))
 
-    # 范围搜索：列「手机」包含 138（订单表缺该列自动跳过；列名直接输入，
-    # 模拟用户跨表搜索时手动输入其他子表的列名）
+    # 跨表预检：订单表/客户表结构不一致 → 拒绝跨表查找（核心函数直接验证）
+    from app.core.db_browser import check_same_structure
+    ok, ref, offenders = check_same_structure(win.conn, ["订单表", "客户表"])
+    assert not ok and [t for t, _s in offenders] == ["客户表"]
+    print("结构预检（异构范围应拒绝）: ok=%s offenders=%s"
+          % (ok, [t for t, _s in offenders]))
+
+    # 取消勾选客户表 → 范围只剩订单表（单表不受结构限制），搜索成功
+    for i in range(win.catalog.topLevelItemCount()):
+        group = win.catalog.topLevelItem(i)
+        for j in range(group.childCount()):
+            child = group.child(j)
+            if child.text(0) == "客户表":
+                child.setCheckState(0, Qt.Unchecked)
     entry = win.cond_rows[0]
-    entry["col"].setCurrentText("手机")
+    entry["col"].setCurrentText("商品名称")
     entry["op"].setCurrentIndex(entry["op"].findData("contains"))
-    entry["value"].setText("138")
+    entry["value"].setText("手机")
     win._do_search()
     last = win.tabs.widget(win.tabs.count() - 1)
     print("搜索标签页:", win.tabs.tabText(win.tabs.count() - 1))
     print("汇总:", last.head.text())
-    assert "命中 1 行" in last.head.text(), "范围搜索命中数不符合预期"
-    assert "1 张缺少条件列已跳过" in last.head.text()
+    assert "命中 3 行" in last.head.text(), "单表范围搜索命中数不符合预期"
+    assert "1 张子表" in last.head.text()
 
     # 拖动换组：把第一张子表移到新大表（调用与 dropEvent 相同的槽）
     table = win.catalog.table_of(win.catalog.currentItem())

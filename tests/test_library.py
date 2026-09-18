@@ -2,9 +2,10 @@
 import sqlite3
 
 from app.core import library
-from app.core.db_browser import list_tables, search_totals
+from app.core.db_browser import list_tables, search_totals, check_same_structure
 from app.core.query_builder import Condition, OP_CONTAINS, OP_EQ
 from app.core.sqlite_writer import import_file
+from app.models.table_meta import RENAME
 from tests.helpers import make_sample_xlsx
 
 
@@ -87,3 +88,40 @@ def test_search_totals_eq_numeric(tmp_path):
     conn = _conn_with_data(tmp_path)
     res = search_totals(conn, ["订单表"], [Condition("订单号", OP_EQ, "1002")])
     assert res["hits"][0]["total"] == 1
+
+
+def test_check_same_structure(tmp_path):
+    conn = _conn_with_data(tmp_path)
+
+    # 单表恒为一致
+    ok, ref, offenders = check_same_structure(conn, ["订单表"])
+    assert ok and ref == "订单表" and offenders == []
+
+    # 订单表 / 客户表 列不同 → 不一致
+    ok, ref, offenders = check_same_structure(conn, ["订单表", "客户表"])
+    assert not ok and ref == "订单表"
+    assert [t for t, _s in offenders] == ["客户表"]
+
+    # 同一文件 rename 再导入 → 订单表_2 结构与订单表一致
+    import_file(conn, str(tmp_path / "lib.db.xlsx"), conflict=RENAME)
+    ok, _ref, offenders = check_same_structure(conn, ["订单表", "订单表_2"])
+    assert ok and offenders == []
+
+    # 结构一致的两张表可跨表搜索，命中各自结果
+    res = search_totals(conn, ["订单表", "订单表_2"],
+                        [Condition("商品名称", OP_CONTAINS, "手机")])
+    hits = {h["table"]: h["total"] for h in res["hits"]}
+    assert hits == {"订单表": 2, "订单表_2": 2}
+    assert res["skipped"] == []
+
+
+def test_check_same_structure_type_mismatch(tmp_path):
+    """列名相同但类型不同也视为结构不一致。"""
+    conn = _conn_with_data(tmp_path)
+    conn.execute(
+        'CREATE TABLE "伪订单" ("订单号" TEXT, "商品名称" TEXT, "金额" TEXT, '
+        '"下单时间" TEXT, "备注" TEXT, "长编号" TEXT)')
+    conn.commit()
+    ok, _ref, offenders = check_same_structure(conn, ["订单表", "伪订单"])
+    assert not ok
+    assert [t for t, _s in offenders] == ["伪订单"]

@@ -68,10 +68,30 @@ def search(conn, table, conditions, combine="AND", page=1, page_size=PAGE_SIZE):
             "elapsed": time.perf_counter() - start}
 
 
+def table_structure(conn, table):
+    """表头结构：(列名, 类型) 按建表顺序。"""
+    return tuple(table_columns(conn, table))
+
+
+def check_same_structure(conn, tables):
+    """跨表查找预检：所有表的表头结构（列名+类型，按序）是否一致。
+
+    返回 (ok, 参考表名, offenders)；offenders = [(表名, 该表结构)]，
+    为与第一张表不一致者。单表恒为一致。
+    """
+    if len(tables) <= 1:
+        return True, (tables[0] if tables else ""), []
+    ref_struct = table_structure(conn, tables[0])
+    offenders = [(t, table_structure(conn, t)) for t in tables[1:]
+                 if table_structure(conn, t) != ref_struct]
+    return not offenders, tables[0], offenders
+
+
 def search_totals(conn, tables, conditions, combine="AND"):
     """跨表搜索：返回每张表的命中数。
 
-    条件涉及的列在某张表不存在时跳过该表（记入 skipped）。
+    调用方应先用 check_same_structure 预检结构一致；
+    此处对条件列缺失的表做防御性跳过（记入 skipped）。
     返回 {"hits": [{"table", "total"}...], "skipped": [表名...], "elapsed": 秒}
     """
     start = time.perf_counter()
