@@ -14,8 +14,21 @@ class CatalogTree(QTreeWidget):
     table_moved = Signal(str, str)     # (子表名, 新大表名)
     group_renamed = Signal(str, str)   # (旧大表名, 新大表名)
 
+    # 新版 macOS 上原生样式可能不绘制树形控件复选框，用样式表强制绘制：
+    # 未勾选=空心框，勾选=蓝色实心，半选=浅蓝
+    INDICATOR_CSS = """
+    QTreeView::indicator {
+        width: 15px; height: 15px;
+        border: 1px solid #9a9a9a; border-radius: 3px; background: #ffffff;
+    }
+    QTreeView::indicator:hover { border-color: #3478f6; }
+    QTreeView::indicator:checked { background: #3478f6; border-color: #3478f6; }
+    QTreeView::indicator:indeterminate { background: #9db9f0; border-color: #9db9f0; }
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet(self.INDICATOR_CSS)
         self.setHeaderLabels(["目录（大表 / 子表）"])
         self.setDragDropMode(QTreeWidget.DragDrop)
         self.setDefaultDropAction(Qt.MoveAction)
