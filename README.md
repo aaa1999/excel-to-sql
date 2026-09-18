@@ -1,5 +1,7 @@
 # excel-to-sql
 
+中文 | [English](README.en.md)
+
 单机桌面工具（macOS / Windows）：导入 Excel/CSV → SQLite 数据库，内置数据浏览与条件搜索。设计方案见 [plan.md](plan.md)。
 
 ## 功能
