@@ -253,6 +253,8 @@ class ImportThread(QThread):
         conn = sqlite3.connect(self.db_path)
         total_rows = 0
         try:
+            from app.core.library import init_library, register_table
+            init_library(conn)
             est_map = {}
             for f, _sheet, _meta in self.entries:
                 if f not in est_map:
@@ -274,6 +276,8 @@ class ImportThread(QThread):
 
                 rows = iter_sheet_rows(f, sheet, header_row=meta.header_row)
                 stats = write_table(conn, meta, rows, progress_cb=cb)
+                # 目录登记：文件（去扩展名）= 大表分组，Sheet = 子表
+                register_table(conn, Path(f).stem, stats.table)
                 self.table_done.emit(stats.table, stats.rows_written,
                                      stats.elapsed)
                 total_rows += stats.rows_written

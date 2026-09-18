@@ -123,6 +123,11 @@ def import_file(conn, path, sheets=None, header_row=True, conflict=REPLACE,
     # 由 prepare_table 按 replace / rename / append 策略处理
     used = set()
 
+    # 目录登记：文件（去扩展名）= 大表分组，Sheet = 子表
+    from app.core.library import init_library, register_table
+    init_library(conn)
+    group_name = os.path.splitext(os.path.basename(path))[0]
+
     # 先为每个 Sheet 构建表结构（统一去重表名），再逐表流式写入
     plan = []
     for sheet, _est in list_sheets(path):
@@ -142,5 +147,6 @@ def import_file(conn, path, sheets=None, header_row=True, conflict=REPLACE,
         rows = iter_sheet_rows(path, sheet, header_row=header_row)
         st = write_table(conn, meta, rows, progress_cb=progress_cb)
         st.source_sheet = "%s › %s" % (os.path.basename(path), sheet)
+        register_table(conn, group_name, st.table)
         stats_all.append(st)
     return stats_all

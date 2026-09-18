@@ -1,21 +1,24 @@
-"""主窗口：数据浏览与搜索工作台。
+"""主窗口：目录树（大表/子表）+ 条件搜索工作台。
 
-左侧表列表 / 右侧搜索条件区 + 标签页（每张表的「全部数据」一页，
-每次搜索的结果在独立的新标签页展示，可保留多个结果对比）。
+- 左侧目录树：大表（Excel 文件）分组 → 子表；勾选子表 = 搜索范围（可跨大表），
+  拖动子表可更换所属大表（仅改目录归属）
+- 右侧：条件搜索区（可指定正向/反向范围）+ 标签页
+  （每张子表的「全部数据」一页；每次搜索的范围结果一页，页内按子表汇总）
 """
 import sqlite3
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-    QRadioButton, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout,
-    QWidget)
+    QMainWindow, QMessageBox, QPushButton, QRadioButton, QSplitter,
+    QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
-from app.core import db_browser
+from app.core import db_browser, library
 from app.core.query_builder import Condition, OPERATOR_LABELS, OP_CONTAINS
 from app.ui.import_wizard import ImportWizard
+from app.ui.widgets.catalog_tree import CatalogTree
 from app.ui.widgets.data_table import DataTableWidget
+from app.ui.widgets.scope_result import ScopeResultWidget
 
 
 class MainWindow(QMainWindow):
@@ -56,18 +59,19 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_workbench(self):
-        self.table_list = QListWidget()
-        self.table_list.currentItemChanged.connect(self._on_table_changed)
+        self.catalog = CatalogTree()
+        self.catalog.currentItemChanged.connect(self._on_item_changed)
+        self.catalog.table_moved.connect(self._on_table_moved)
+
         left_layout = QVBoxLayout()
-        left_layout.addWidget(QLabel("表"))
-        left_layout.addWidget(self.table_list)
+        left_layout.addWidget(QLabel("目录（勾选子表 = 搜索范围，可拖动换组）"))
+        left_layout.addWidget(self.catalog)
         left = QWidget()
         left.setLayout(left_layout)
 
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
-        self.tabs.tabCloseRequested.connect(
-            lambda i: self.tabs.removeTab(i))
+        self.tabs.tabCloseRequested.connect(lambda i: self.tabs.removeTab(i))
 
         right_layout = QVBoxLayout()
         right_layout.addWidget(self._build_search_box())
@@ -78,7 +82,7 @@ class MainWindow(QMainWindow):
         splitter = QSplitter()
         splitter.addWidget(left)
         splitter.addWidget(right)
-        splitter.setSizes([240, 1000])
+        splitter.setSizes([280, 1000])
         return splitter
 
     def _build_search_box(self):
@@ -90,6 +94,12 @@ class MainWindow(QMainWindow):
         self.and_radio = QRadioButton("且（全部满足）")
         self.and_radio.setChecked(True)
         self.or_radio = QRadioButton("或（满足其一）")
+
+        # 查找范围：勾选的子表（正向）/ 未勾选的子表（反向）
+        self.scope_normal = QRadioButton("在勾选的子表中查找")
+        self.scope_normal.setChecked(True)
+        self.scope_inverse = QRadioButton("反向：在未勾选的子表中查找")
+
         search_btn = QPushButton("搜索")
         search_btn.clicked.connect(self._do_search)
         reset_btn = QPushButton("重置")
@@ -102,10 +112,15 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.or_radio)
         bar.addWidget(reset_btn)
         bar.addWidget(search_btn)
+        scope_bar = QHBoxLayout()
+        scope_bar.addWidget(self.scope_normal)
+        scope_bar.addWidget(self.scope_inverse)
+        scope_bar.addStretch(1)
 
         box = QVBoxLayout()
         box.addLayout(self.cond_area)
         box.addLayout(bar)
+        box.addLayout(scope_bar)
         group = QGroupBox("条件搜索（等于 / 不等于 / 包含 / 不包含 / 局部匹配，支持中文）")
         group.setLayout(box)
         self._add_cond_row()
@@ -115,7 +130,9 @@ class MainWindow(QMainWindow):
 
     def open_db(self, path):
         new_conn = sqlite3.connect(path)
-        self.tabs.clear()  # 释放引用旧连接的表格页
+        library.init_library(new_conn)
+        library.auto_register(new_conn)  # 旧库未登记的表归入“未分组”
+        self.tabs.clear()
         self.result_seq = 0
         self._columns_cache = {}
         if self.conn is not None:
@@ -123,8 +140,7 @@ class MainWindow(QMainWindow):
         self.conn = new_conn
         self.db_path = path
         self.setWindowTitle("Excel 转 SQL — %s" % path)
-        self._reload_tables()
-        self.stack.setCurrentIndex(1)
+        self._reload_catalog()
 
     def _open_db_dialog(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -140,20 +156,14 @@ class MainWindow(QMainWindow):
         if wizard.exec() and wizard.db_path:
             self.open_db(wizard.db_path)
 
-    def _reload_tables(self):
-        self.table_list.blockSignals(True)
-        self.table_list.clear()
-        for name in db_browser.list_tables(self.conn):
-            self.table_list.addItem(QListWidgetItem(name))
-        self.table_list.blockSignals(False)
-        if self.table_list.count():
-            self.table_list.setCurrentRow(0)
+    def _reload_catalog(self, checked=None):
+        self.catalog.load(library.list_tree(self.conn), checked=checked)
+        self.stack.setCurrentIndex(1)
 
-    # ---------- 浏览与搜索 ----------
+    # ---------- 目录交互 ----------
 
     def _current_table(self):
-        item = self.table_list.currentItem()
-        return item.text() if item else ""
+        return self.catalog.table_of(self.catalog.currentItem())
 
     def _table_columns(self, table):
         if table not in self._columns_cache:
@@ -161,16 +171,15 @@ class MainWindow(QMainWindow):
                 name for name, _t in db_browser.table_columns(self.conn, table)]
         return self._columns_cache[table]
 
-    def _on_table_changed(self, current, _previous):
-        if current is None or self.conn is None:
+    def _on_item_changed(self, current, _previous):
+        table = self.catalog.table_of(current)
+        if not table or self.conn is None:
             return
-        table = current.text()
         cols = self._table_columns(table)
-        # 搜索条件区的「列」下拉框展示当前表全部列名（含中文列名）
+        # 条件列下拉框列出该子表全部列名（中文原样）；跨表搜索时也可手动输入其他列名
         for entry in self.cond_rows:
             entry["col"].clear()
             entry["col"].addItems(cols)
-        # 打开/复用「表名·全部」标签页
         title = "%s·全部" % table
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i) == title:
@@ -179,13 +188,28 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(DataTableWidget(self.conn, table, cols), title)
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
 
+    def _on_table_moved(self, table, group):
+        """拖动子表到另一个大表：更新目录归属后重建树（保留勾选状态）。"""
+        try:
+            library.move_table(self.conn, table, group)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "移动失败", str(e))
+            return
+        checked = set(self.catalog.checked_tables())
+        self._reload_catalog(checked=checked)
+        self.statusBar().showMessage("已将「%s」移动到大表「%s」" % (table, group), 5000)
+
+    # ---------- 条件与搜索 ----------
+
     def _add_cond_row(self):
         cols = self._table_columns(self._current_table()) if self.conn else []
         row_widget = QWidget()
         col_combo = QComboBox()
+        col_combo.setEditable(True)            # 跨表搜索时可输入其他子表的列名
+        col_combo.setInsertPolicy(QComboBox.NoInsert)
         col_combo.addItems(cols)
         col_combo.setMinimumWidth(160)
-        col_combo.setToolTip("列名（来自 Excel 表头）")
+        col_combo.setToolTip("列名（来自当前子表表头；跨表搜索可输入其他列名）")
         op_combo = QComboBox()
         for op, label in OPERATOR_LABELS.items():
             op_combo.addItem(label, op)
@@ -218,29 +242,39 @@ class MainWindow(QMainWindow):
     def _do_search(self):
         if self.conn is None:
             return
-        table = self._current_table()
-        if not table:
-            QMessageBox.information(self, "提示", "请先在左侧选择一张表")
+        # 范围：勾选的子表（正向）或未勾选的子表（反向），可跨大表
+        inverse = self.scope_inverse.isChecked()
+        checked = set(self.catalog.checked_tables())
+        scope = [t for t in library.all_tables(self.conn)
+                 if (t in checked) != inverse]
+        if not scope:
+            QMessageBox.information(
+                self, "提示",
+                "查找范围为空：请先在目录中%s" %
+                ("取消勾选部分子表再做反向查找" if inverse else "勾选要查找的子表"))
             return
+
         conditions = []
         for entry in self.cond_rows:
+            column = entry["col"].currentText().strip()
             value = entry["value"].text().strip()
-            if not value:
+            if not column and not value:
                 continue
-            conditions.append(Condition(entry["col"].currentText(),
-                                        entry["op"].currentData(), value))
+            if not column or not value:
+                QMessageBox.information(self, "提示", "请补全条件：列名和搜索值都要填")
+                return
+            conditions.append(Condition(column, entry["op"].currentData(), value))
         if not conditions:
-            QMessageBox.information(self, "提示", "请至少填写一个搜索值")
+            QMessageBox.information(self, "提示", "请至少填写一个搜索条件")
             return
-        combine = "AND" if self.and_radio.isChecked() else "OR"
-        cols = self._table_columns(table)
 
-        # 搜索结果固定以新标签页呈现，可保留多个结果并排对比
+        combine = "AND" if self.and_radio.isChecked() else "OR"
         self.result_seq += 1
         seq = self.result_seq
         mark = chr(0x2460 + seq - 1) if seq <= 20 else str(seq)
-        widget = DataTableWidget(self.conn, table, cols, conditions, combine)
-        self.tabs.addTab(widget, "搜索结果%s·%s" % (mark, table))
+        widget = ScopeResultWidget(self.conn, scope, conditions, combine,
+                                   inverse=inverse)
+        self.tabs.addTab(widget, "搜索结果%s·%d表" % (mark, len(scope)))
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
 
     def _reset_search(self):
@@ -250,6 +284,7 @@ class MainWindow(QMainWindow):
         if self.cond_rows:
             self.cond_rows[0]["value"].clear()
         self.and_radio.setChecked(True)
+        self.scope_normal.setChecked(True)
 
     def closeEvent(self, event):
         if self.conn is not None:

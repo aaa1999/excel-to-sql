@@ -14,9 +14,11 @@ def _quote(name):
 
 
 def list_tables(conn):
+    """数据表列表（排除 sqlite 内部表与 lib_* 目录表）。"""
     return [r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master "
-        "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+        "WHERE type='table' AND name NOT LIKE 'sqlite_%' "
+        "AND name NOT LIKE 'lib_%' ORDER BY name")]
 
 
 def table_columns(conn, table):
@@ -63,6 +65,29 @@ def search(conn, table, conditions, combine="AND", page=1, page_size=PAGE_SIZE):
     ).fetchall()
     return {"columns": cols, "rows": rows, "total": total,
             "page": page, "page_size": page_size,
+            "elapsed": time.perf_counter() - start}
+
+
+def search_totals(conn, tables, conditions, combine="AND"):
+    """跨表搜索：返回每张表的命中数。
+
+    条件涉及的列在某张表不存在时跳过该表（记入 skipped）。
+    返回 {"hits": [{"table", "total"}...], "skipped": [表名...], "elapsed": 秒}
+    """
+    start = time.perf_counter()
+    hits, skipped = [], []
+    for t in tables:
+        cols = {name for name, _t in table_columns(conn, t)}
+        if not all(c.column in cols for c in conditions):
+            skipped.append(t)
+            continue
+        conds = [Condition(c.column, c.op, _adapt_eq_value(conn, t, c))
+                 for c in conditions]
+        where, params = build_where(conds, combine)
+        base = "FROM %s%s" % (_quote(t), " WHERE %s" % where if where else "")
+        total = conn.execute("SELECT COUNT(*) %s" % base, params).fetchone()[0]
+        hits.append({"table": t, "total": total})
+    return {"hits": hits, "skipped": skipped,
             "elapsed": time.perf_counter() - start}
 
 
