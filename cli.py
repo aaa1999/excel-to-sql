@@ -5,10 +5,12 @@
   python cli.py convert samples/订单示例.xlsx -o output/demo.db
   python cli.py tables -d output/demo.db
   python cli.py search -d output/demo.db -t 订单表 --where 商品名称~手机
-  python cli.py search -d output/demo.db -t 订单表 --where 备注!~测试 --combine OR --where 商品名称=机械键盘
+  python cli.py search -d output/demo.db -t 订单表 --where 商品名称!=手机壳 --where 备注!~测试
+  python cli.py search -d output/demo.db -t 订单表 --where "商品名称@手机*"
   python cli.py export -d output/demo.db -t 订单表 -o output/订单表.xlsx
 
-条件语法：列名=值（等于）  列名~值（包含）  列名!~值（不包含）
+条件语法：列名=值（等于）  列名!=值（不等于）  列名~值（包含）  列名!~值（不包含）
+          列名@值（局部匹配，* 任意多字符、? 单字符，如 "手机*"）
 """
 import argparse
 import sqlite3
@@ -18,7 +20,8 @@ from pathlib import Path
 from app.core.db_browser import (
     list_tables, table_columns, row_count,
     search as db_search, export as db_export)
-from app.core.query_builder import Condition, OP_EQ, OP_CONTAINS, OP_NOT_CONTAINS
+from app.core.query_builder import (
+    Condition, OP_EQ, OP_NEQ, OP_CONTAINS, OP_NOT_CONTAINS, OP_MATCH)
 from app.core.sqlite_writer import import_file
 from app.models.table_meta import REPLACE, RENAME, APPEND
 from app.utils.errors import ExcelToSqlError
@@ -61,14 +64,17 @@ def cmd_tables(args):
 
 
 def parse_where(text):
-    for sep, op in (("!~", OP_NOT_CONTAINS), ("~", OP_CONTAINS), ("=", OP_EQ)):
+    seps = ((OP_NOT_CONTAINS, "!~"), (OP_NEQ, "!="), (OP_CONTAINS, "~"),
+            (OP_MATCH, "@"), (OP_EQ, "="))
+    for op, sep in seps:
         if sep in text:
             column, _, value = text.partition(sep)
             column = column.strip()
             if not column or not value:
                 break
             return Condition(column, op, value)
-    raise SystemExit("条件格式错误：%r（应为 列名=值 / 列名~值 / 列名!~值）" % text)
+    raise SystemExit(
+        "条件格式错误：%r（应为 列=值 / 列!=值 / 列~值 / 列!~值 / 列@通配符）" % text)
 
 
 def _print_rows(columns, rows):
@@ -99,7 +105,8 @@ def cmd_search(args):
                         combine=args.combine, page=args.page, page_size=args.size)
         if conditions:
             sep = " 且 " if args.combine == "AND" else " 或 "
-            op_names = {"eq": "=", "contains": "包含", "not_contains": "不包含"}
+            op_names = {"eq": "=", "neq": "!=", "contains": "包含",
+                        "not_contains": "不包含", "match": "局部匹配"}
             desc = sep.join("%s %s %r" % (c.column, op_names[c.op], c.value)
                             for c in conditions)
             print("搜索：%s" % desc)
@@ -142,11 +149,13 @@ def main(argv=None):
     p.add_argument("-d", "--db", required=True)
     p.set_defaults(func=cmd_tables)
 
-    p = sub.add_parser("search",
-                       help="条件搜索：列=值(等于) 列~值(包含) 列!~值(不包含)")
+    p = sub.add_parser(
+        "search",
+        help="条件搜索：列=值(等于) 列!=值(不等于) 列~值(包含) 列!~值(不包含) 列@通配符(局部匹配)")
     p.add_argument("-d", "--db", required=True)
     p.add_argument("-t", "--table", required=True)
-    p.add_argument("--where", action="append", help='条件，如 "商品名称~手机"；可多次')
+    p.add_argument("--where", action="append",
+                   help='条件，如 "商品名称~手机" 或 "商品名称@手机*"；可多次')
     p.add_argument("--combine", choices=["AND", "OR"], default="AND",
                    help="多条件组合（默认 AND）")
     p.add_argument("--page", type=int, default=1)

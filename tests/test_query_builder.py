@@ -1,11 +1,19 @@
 from app.core.query_builder import (
-    build_where, Condition, OP_EQ, OP_CONTAINS, OP_NOT_CONTAINS)
+    build_where, wildcard_pattern, Condition,
+    OP_EQ, OP_NEQ, OP_CONTAINS, OP_NOT_CONTAINS, OP_MATCH)
 
 
 def test_eq():
     where, params = build_where([Condition("name", OP_EQ, "张三")])
     assert where == '("name" = ?)'
     assert params == ["张三"]
+
+
+def test_neq_null_semantics():
+    where, params = build_where([Condition("城市", OP_NEQ, "北京")])
+    # 空值视为「不等于」命中（与「不包含」一致）
+    assert where == '(("城市" IS NULL OR "城市" != ?))'
+    assert params == ["北京"]
 
 
 def test_contains_chinese():
@@ -41,6 +49,22 @@ def test_multi_condition_and_or():
 
 def test_empty_conditions():
     assert build_where([]) == ("", [])
+
+
+def test_wildcard_pattern():
+    assert wildcard_pattern("手机*") == "手机%"      # 前缀
+    assert wildcard_pattern("*壳") == "%壳"          # 后缀
+    assert wildcard_pattern("机*盘") == "机%盘"      # 中间
+    assert wildcard_pattern("手机?") == "手机_"      # 单字符
+    assert wildcard_pattern("手机") == "%手机%"      # 无通配符按包含
+    assert wildcard_pattern("100%*") == "100\\%%"    # 字面 % 转义 + 通配
+    assert wildcard_pattern("a_b*") == "a\\_b%"      # 字面 _ 转义
+
+
+def test_match_sql():
+    where, params = build_where([Condition("商品名称", OP_MATCH, "手机*")])
+    assert where == '(CAST("商品名称" AS TEXT) LIKE ? ESCAPE \'\\\')'
+    assert params == ["手机%"]
 
 
 def test_unknown_operator():

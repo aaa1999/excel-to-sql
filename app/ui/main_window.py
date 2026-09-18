@@ -106,7 +106,7 @@ class MainWindow(QMainWindow):
         box = QVBoxLayout()
         box.addLayout(self.cond_area)
         box.addLayout(bar)
-        group = QGroupBox("条件搜索（等于 / 包含 / 不包含，支持中文）")
+        group = QGroupBox("条件搜索（等于 / 不等于 / 包含 / 不包含 / 局部匹配，支持中文）")
         group.setLayout(box)
         self._add_cond_row()
         return group
@@ -191,7 +191,7 @@ class MainWindow(QMainWindow):
             op_combo.addItem(label, op)
         op_combo.setCurrentIndex(op_combo.findData(OP_CONTAINS))  # 默认「包含」
         value_edit = QLineEdit()
-        value_edit.setPlaceholderText("输入搜索值，支持中文")
+        value_edit.setPlaceholderText("输入搜索值，支持中文（局部匹配可用 * 和 ?）")
         value_edit.returnPressed.connect(self._do_search)
         del_btn = QPushButton("－")
 

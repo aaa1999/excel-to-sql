@@ -2,7 +2,8 @@
 import sqlite3
 
 from app.core.db_browser import list_tables, search, export
-from app.core.query_builder import Condition, OP_EQ, OP_CONTAINS, OP_NOT_CONTAINS
+from app.core.query_builder import (
+    Condition, OP_EQ, OP_NEQ, OP_CONTAINS, OP_NOT_CONTAINS, OP_MATCH)
 from app.core.sqlite_writer import import_file
 from app.models.table_meta import RENAME, APPEND
 from app.utils.errors import SchemaMismatchError
@@ -88,6 +89,40 @@ def test_search_chinese(tmp_path):
     r = search(conn, "订单表", [], page=1, page_size=2)
     assert r["total"] == 4 and len(r["rows"]) == 2
     assert r["columns"] == ["订单号", "商品名称", "金额", "下单时间", "备注", "长编号"]
+    conn.close()
+
+
+def test_search_neq_and_match(tmp_path):
+    xlsx = make_sample_xlsx(tmp_path / "sample.xlsx")
+    conn = _open(tmp_path)
+    import_file(conn, xlsx)
+
+    # 不等于（文本）：手机壳/手机膜/机械键盘/显示器 中排除手机壳
+    r = search(conn, "订单表", [Condition("商品名称", OP_NEQ, "手机壳")])
+    assert r["total"] == 3
+
+    # 不等于（数值列自动按数值比较）
+    r = search(conn, "订单表", [Condition("订单号", OP_NEQ, "1001")])
+    assert r["total"] == 3
+
+    # 不等于把空值视为命中：备注为空的行（1002）也计入
+    r = search(conn, "订单表", [Condition("备注", OP_NEQ, "测试")])
+    assert r["total"] == 3  # 1002(NULL)、1003、1004
+
+    # 局部匹配：前缀 / 后缀 / 中间 / 单字符 / 无通配符按包含
+    r = search(conn, "订单表", [Condition("商品名称", OP_MATCH, "手机*")])
+    assert r["total"] == 2                       # 手机壳、手机膜
+    r = search(conn, "订单表", [Condition("商品名称", OP_MATCH, "*器")])
+    assert r["total"] == 1                       # 显示器
+    r = search(conn, "订单表", [Condition("商品名称", OP_MATCH, "机*盘")])
+    assert r["total"] == 1                       # 机械键盘
+    r = search(conn, "订单表", [Condition("商品名称", OP_MATCH, "手机?")])
+    assert r["total"] == 2                       # 手机壳、手机膜
+    r = search(conn, "订单表", [Condition("商品名称", OP_MATCH, "手机")])
+    assert r["total"] == 2
+    # 通配符之间的字面 %：不匹配任何行
+    r = search(conn, "订单表", [Condition("商品名称", OP_MATCH, "%*")])
+    assert r["total"] == 0
     conn.close()
 
 
