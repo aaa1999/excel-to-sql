@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (QInputDialog, QMenu, QTreeWidget,
 
 
 class CatalogTree(QTreeWidget):
-    table_moved = Signal(str, str)  # (子表名, 新大表名)
+    table_moved = Signal(str, str)     # (子表名, 新大表名)
+    group_renamed = Signal(str, str)   # (旧大表名, 新大表名)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -164,6 +165,9 @@ class CatalogTree(QTreeWidget):
                            lambda: self._set_group(group, Qt.Unchecked))
             menu.addAction("仅勾选本组（其余全不选）",
                            lambda: self._only_group(group))
+            menu.addSeparator()
+            menu.addAction("重命名大表…",
+                           lambda: self._rename_group(group))
         else:
             table = item.text(0)
             if item.checkState(0) == Qt.Checked:
@@ -189,6 +193,12 @@ class CatalogTree(QTreeWidget):
         name, ok = QInputDialog.getText(self, "新建大表", "大表名称：")
         if ok and name.strip():
             self.table_moved.emit(table, name.strip())
+
+    def _rename_group(self, group):
+        name, ok = QInputDialog.getText(self, "重命名大表", "新名称：",
+                                        text=group.text(0))
+        if ok:
+            self.group_renamed.emit(group.text(0), name.strip())
 
     # ---------- 拖动换组 ----------
 

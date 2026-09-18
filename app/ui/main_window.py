@@ -107,6 +107,7 @@ class MainWindow(QMainWindow):
         self.catalog = CatalogTree()
         self.catalog.currentItemChanged.connect(self._on_item_changed)
         self.catalog.table_moved.connect(self._on_table_moved)
+        self.catalog.group_renamed.connect(self._on_group_renamed)
 
         left_layout = QVBoxLayout()
         left_layout.addWidget(QLabel("目录（勾选子表 = 搜索范围，可拖动换组）"))
@@ -257,6 +258,17 @@ class MainWindow(QMainWindow):
         checked = set(self.catalog.checked_tables())
         self._reload_catalog(checked=checked)
         self.statusBar().showMessage("已将「%s」移动到大表「%s」" % (table, group), 5000)
+
+    def _on_group_renamed(self, old, new):
+        """重命名大表：仅目录标签，子表归属与数据不变。"""
+        try:
+            library.rename_group(self.conn, old, new)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "重命名失败", str(e))
+            return
+        checked = set(self.catalog.checked_tables())
+        self._reload_catalog(checked=checked)
+        self.statusBar().showMessage("大表「%s」已重命名为「%s」" % (old, new), 5000)
 
     # ---------- 条件与搜索 ----------
 

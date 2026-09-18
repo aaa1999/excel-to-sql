@@ -61,6 +61,26 @@ def move_table(conn, table_name, new_group_name):
     conn.commit()
 
 
+def rename_group(conn, old_name, new_name):
+    """重命名大表（仅目录标签，子表归属与数据不变）。
+
+    重名为已有大表名或空名时抛 ValueError。
+    """
+    new_name = str(new_name).strip()
+    if not new_name:
+        raise ValueError("大表名称不能为空")
+    if new_name == old_name:
+        return
+    exists = conn.execute(
+        "SELECT 1 FROM %s WHERE name=?" % GROUP_TABLE, (new_name,)).fetchone()
+    if exists:
+        raise ValueError("已存在同名大表：%s" % new_name)
+    conn.execute(
+        "UPDATE %s SET name=? WHERE name=?" % GROUP_TABLE,
+        (new_name, old_name))
+    conn.commit()
+
+
 def list_tree(conn):
     """[(大表名, [子表名...])]，按登记顺序。"""
     rows = conn.execute(

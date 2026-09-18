@@ -37,6 +37,24 @@ def test_move_table(tmp_path):
     assert tree["lib.db"] == ["订单表"]
 
 
+def test_rename_group(tmp_path):
+    conn = _conn_with_data(tmp_path)
+    library.rename_group(conn, "lib.db", "订单文件")
+    tree = dict(library.list_tree(conn))
+    assert tree["订单文件"] == ["订单表", "客户表"]
+
+    # 重名为已有大表 → 报错
+    library.ensure_group(conn, "另一个")
+    import pytest
+    with pytest.raises(ValueError):
+        library.rename_group(conn, "订单文件", "另一个")
+    # 同名 → 无操作，不报错
+    library.rename_group(conn, "订单文件", "订单文件")
+    # 空名 → 报错
+    with pytest.raises(ValueError):
+        library.rename_group(conn, "订单文件", "   ")
+
+
 def test_move_kept_after_reimport(tmp_path):
     """重复导入同名表：保留用户拖动调整过的归属，且不重复登记。"""
     conn = _conn_with_data(tmp_path)
