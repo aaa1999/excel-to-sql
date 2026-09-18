@@ -110,6 +110,18 @@ class MainWindow(QMainWindow):
 
         left_layout = QVBoxLayout()
         left_layout.addWidget(QLabel("目录（勾选子表 = 搜索范围，可拖动换组）"))
+
+        # 批量勾选按钮：不依赖点中小复选框，一键调整范围
+        btn_row = QHBoxLayout()
+        btn_all = QPushButton("全选")
+        btn_all.clicked.connect(self.catalog.check_all)
+        btn_none = QPushButton("全不选")
+        btn_none.clicked.connect(self.catalog.uncheck_all)
+        btn_invert = QPushButton("反选")
+        btn_invert.clicked.connect(self.catalog.invert_all)
+        for b in (btn_all, btn_none, btn_invert):
+            btn_row.addWidget(b)
+        left_layout.addLayout(btn_row)
         left_layout.addWidget(self.catalog)
         left = QWidget()
         left.setLayout(left_layout)
