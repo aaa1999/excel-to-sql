@@ -11,6 +11,7 @@
 
 条件语法：列名=值（等于）  列名!=值（不等于）  列名~值（包含）  列名!~值（不包含）
           列名@值（局部匹配，* 任意多字符、? 单字符，如 "手机*"）
+多值：值内用逗号分隔（如 商品名称~手机,键盘 = 包含任一；不等于/不包含为全部排除）
 """
 import argparse
 import sqlite3
@@ -155,7 +156,7 @@ def main(argv=None):
     p.add_argument("-d", "--db", required=True)
     p.add_argument("-t", "--table", required=True)
     p.add_argument("--where", action="append",
-                   help='条件，如 "商品名称~手机" 或 "商品名称@手机*"；可多次')
+                   help='条件，如 "商品名称~手机"；值可逗号分隔多个；条件可多次')
     p.add_argument("--combine", choices=["AND", "OR"], default="AND",
                    help="多条件组合（默认 AND）")
     p.add_argument("--page", type=int, default=1)

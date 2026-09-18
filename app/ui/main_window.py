@@ -191,7 +191,7 @@ class MainWindow(QMainWindow):
             op_combo.addItem(label, op)
         op_combo.setCurrentIndex(op_combo.findData(OP_CONTAINS))  # 默认「包含」
         value_edit = QLineEdit()
-        value_edit.setPlaceholderText("输入搜索值，支持中文（局部匹配可用 * 和 ?）")
+        value_edit.setPlaceholderText("搜索值，支持中文；多个值用逗号分隔；局部匹配可用 * 和 ?")
         value_edit.returnPressed.connect(self._do_search)
         del_btn = QPushButton("－")
 

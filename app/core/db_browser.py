@@ -3,7 +3,8 @@ import csv
 import re
 import time
 
-from app.core.query_builder import build_where, Condition, OP_EQ, OP_NEQ
+from app.core.query_builder import (
+    build_where, split_values, Condition, OP_EQ, OP_NEQ)
 
 PAGE_SIZE = 100
 
@@ -28,15 +29,21 @@ def row_count(conn, table):
 
 
 def _adapt_eq_value(conn, table, condition):
-    """「等于 / 不等于」在数值列上自动按数值比较（如 订单号 = 1002）。"""
+    """「等于 / 不等于」在数值列上自动按数值比较（如 订单号 = 1002）。
+
+    多值（逗号分隔）逐个转换后回拼。
+    """
     if condition.op not in (OP_EQ, OP_NEQ):
         return condition.value
     for name, ctype in table_columns(conn, table):
         if name == condition.column and ctype in ("INTEGER", "REAL"):
-            try:
-                return int(condition.value) if ctype == "INTEGER" else float(condition.value)
-            except ValueError:
-                return condition.value  # 非数值字面量，按原值比较
+            out = []
+            for v in split_values(condition.value):
+                try:
+                    out.append(str(int(v) if ctype == "INTEGER" else float(v)))
+                except ValueError:
+                    out.append(v)  # 非数值字面量，按原值比较
+            return ",".join(out)
     return condition.value
 
 

@@ -126,6 +126,43 @@ def test_search_neq_and_match(tmp_path):
     conn.close()
 
 
+def test_search_multi_values(tmp_path):
+    xlsx = make_sample_xlsx(tmp_path / "sample.xlsx")
+    conn = _open(tmp_path)
+    import_file(conn, xlsx)
+
+    # 等于多值：命中任一
+    r = search(conn, "订单表", [Condition("商品名称", OP_EQ, "手机壳,显示器")])
+    assert r["total"] == 2
+
+    # 数值列等于多值
+    r = search(conn, "订单表", [Condition("订单号", OP_EQ, "1001,1003")])
+    assert r["total"] == 2
+
+    # 包含多值（全角逗号）：手机壳/手机膜/机械键盘
+    r = search(conn, "订单表", [Condition("商品名称", OP_CONTAINS, "手机，键盘")])
+    assert r["total"] == 3
+
+    # 不包含多值：备注既不含"手机"也不含"新品"（空值命中：测试、NULL）
+    r = search(conn, "订单表", [Condition("备注", OP_NOT_CONTAINS, "手机,新品")])
+    assert r["total"] == 2  # 1001(测试)、1002(NULL)
+
+    # 不等于多值：排除两个商品名
+    r = search(conn, "订单表", [Condition("商品名称", OP_NEQ, "手机壳,显示器")])
+    assert r["total"] == 2  # 手机膜、机械键盘
+
+    # 局部匹配多模式：手机* 或 *器
+    r = search(conn, "订单表", [Condition("商品名称", OP_MATCH, "手机*,*器")])
+    assert r["total"] == 3  # 手机壳、手机膜、显示器
+
+    # 多值条件行 与 另一条件行 且 组合
+    r = search(conn, "订单表",
+               [Condition("商品名称", OP_CONTAINS, "手机,机械"),
+                Condition("备注", OP_NEQ, "测试")], combine="AND")
+    assert r["total"] == 2  # 手机膜(NULL 备注)、机械键盘
+    conn.close()
+
+
 def test_conflict_strategies(tmp_path):
     xlsx = make_sample_xlsx(tmp_path / "sample.xlsx")
 

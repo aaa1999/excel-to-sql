@@ -1,6 +1,13 @@
 from app.core.query_builder import (
-    build_where, wildcard_pattern, Condition,
+    build_where, split_values, wildcard_pattern, Condition,
     OP_EQ, OP_NEQ, OP_CONTAINS, OP_NOT_CONTAINS, OP_MATCH)
+
+
+def test_split_values():
+    assert split_values("a, b，c ") == ["a", "b", "c"]  # 半角 + 全角逗号
+    assert split_values("a,,b") == ["a", "b"]
+    assert split_values("  ") == []
+    assert split_values("单个值") == ["单个值"]
 
 
 def test_eq():
@@ -65,6 +72,48 @@ def test_match_sql():
     where, params = build_where([Condition("商品名称", OP_MATCH, "手机*")])
     assert where == '(CAST("商品名称" AS TEXT) LIKE ? ESCAPE \'\\\')'
     assert params == ["手机%"]
+
+
+def test_multi_value_eq_or():
+    where, params = build_where([Condition("商品名称", OP_EQ, "手机壳,显示器")])
+    assert where == '(("商品名称" = ? OR "商品名称" = ?))'
+    assert params == ["手机壳", "显示器"]
+
+
+def test_multi_value_contains_or():
+    where, params = build_where([Condition("名", OP_CONTAINS, "手机，键盘")])
+    assert where == (
+        '((CAST("名" AS TEXT) LIKE ? ESCAPE \'\\\' '
+        'OR CAST("名" AS TEXT) LIKE ? ESCAPE \'\\\'))')
+    assert params == ["%手机%", "%键盘%"]
+
+
+def test_multi_value_neq_all_excluded():
+    where, params = build_where([Condition("城市", OP_NEQ, "北京,上海")])
+    assert where == '(("城市" IS NULL OR ("城市" != ? AND "城市" != ?)))'
+    assert params == ["北京", "上海"]
+
+
+def test_multi_value_not_contains_all_excluded():
+    where, params = build_where([Condition("备注", OP_NOT_CONTAINS, "手机,新品")])
+    assert where == (
+        '(("备注" IS NULL OR (CAST("备注" AS TEXT) NOT LIKE ? ESCAPE \'\\\' '
+        'AND CAST("备注" AS TEXT) NOT LIKE ? ESCAPE \'\\\')))')
+    assert params == ["%手机%", "%新品%"]
+
+
+def test_multi_value_match_or():
+    _where, params = build_where([Condition("名", OP_MATCH, "手机*,*器")])
+    assert params == ["手机%", "%器"]
+
+
+def test_multi_value_row_combined_with_other_rows():
+    conds = [Condition("a", OP_EQ, "1,2"), Condition("b", OP_CONTAINS, "x")]
+    where, params = build_where(conds, "AND")
+    assert where == (
+        '(("a" = ? OR "a" = ?)) '
+        'AND (CAST("b" AS TEXT) LIKE ? ESCAPE \'\\\')')
+    assert params == ["1", "2", "%x%"]
 
 
 def test_unknown_operator():
