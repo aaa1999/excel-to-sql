@@ -6,8 +6,9 @@
   （每张子表的「全部数据」一页；每次搜索的范围结果一页，页内按子表汇总）
 """
 import sqlite3
+from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPushButton, QRadioButton, QSplitter,
@@ -19,6 +20,9 @@ from app.ui.import_wizard import ImportWizard
 from app.ui.widgets.catalog_tree import CatalogTree
 from app.ui.widgets.data_table import DataTableWidget
 from app.ui.widgets.scope_result import ScopeResultWidget
+
+_ROOT = Path(__file__).resolve().parents[2]
+_DEMO_DB = _ROOT / "output" / "demo.db"
 
 
 class MainWindow(QMainWindow):
@@ -45,18 +49,59 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self._build_placeholder())
         self.stack.addWidget(self._build_workbench())
         self.setCentralWidget(self.stack)
+        self._reopen_last_db()
+
+    def _reopen_last_db(self):
+        """启动时自动恢复上次打开的数据库（如有）。"""
+        path = QSettings("excel-to-sql", "excel-to-sql").value("last_db", "")
+        if path and Path(path).exists():
+            try:
+                self.open_db(path)
+            except Exception:  # noqa: BLE001 - 恢复失败则停在引导页
+                pass
 
     # ---------- 界面构建 ----------
 
     def _build_placeholder(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        hint = QLabel("点击工具栏「导入 Excel…」开始，或「打开数据库…」查看已有库")
+        layout.addStretch(2)
+        title = QLabel("尚未打开数据库")
+        title.setAlignment(Qt.AlignHCenter)
+        hint = QLabel("范围搜索与勾选子表需要先打开一个数据库，任选一种方式开始：")
         hint.setAlignment(Qt.AlignHCenter)
-        layout.addStretch(1)
+
+        btn_import = QPushButton("导入 Excel…（从 Excel/CSV 文件创建库）")
+        btn_import.clicked.connect(self._open_import_wizard)
+        btn_open = QPushButton("打开已有数据库…")
+        btn_open.clicked.connect(self._open_db_dialog)
+        btn_sample = QPushButton("打开示例数据库")
+        btn_sample.clicked.connect(lambda: self._open_path(str(_DEMO_DB)))
+        if not _DEMO_DB.exists():
+            btn_sample.setEnabled(False)
+            btn_sample.setToolTip("示例库不存在（output/demo.db）")
+
+        btn_box = QVBoxLayout()
+        for b in (btn_import, btn_open, btn_sample):
+            b.setMaximumWidth(360)
+            btn_box.addWidget(b)
+        center = QHBoxLayout()
+        center.addStretch(1)
+        center.addLayout(btn_box)
+        center.addStretch(1)
+
+        layout.addWidget(title)
         layout.addWidget(hint)
-        layout.addStretch(1)
+        layout.addSpacing(12)
+        layout.addLayout(center)
+        layout.addStretch(3)
         return page
+
+    def _open_path(self, path):
+        try:
+            self.open_db(path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "打开失败", str(e))
 
     def _build_workbench(self):
         self.catalog = CatalogTree()
@@ -140,6 +185,8 @@ class MainWindow(QMainWindow):
         self.conn = new_conn
         self.db_path = path
         self.setWindowTitle("Excel 转 SQL — %s" % path)
+        QSettings("excel-to-sql", "excel-to-sql").setValue(
+            "last_db", str(Path(path).resolve()))
         self._reload_catalog()
 
     def _open_db_dialog(self):
