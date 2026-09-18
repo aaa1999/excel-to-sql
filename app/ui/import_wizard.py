@@ -73,8 +73,39 @@ class FilePage(QWizardPage):
         return bool(self.checked())
 
 
+class _SampleLoader(QThread):
+    """后台读取各 Sheet 的数据样本并构建 TableMeta（避免卡 GUI 线程）。"""
+
+    loaded = Signal(list)   # [(file, sheet, TableMeta)]
+    failed = Signal(str)
+
+    def __init__(self, entries, header_row, parent=None):
+        super().__init__(parent)
+        self.entries = entries      # [(file, sheet)]
+        self.header_row = header_row
+
+    def run(self):
+        try:
+            results = []
+            used = set()
+            for f, sheet in self.entries:
+                header, sample = read_sample(f, sheet, header_row=self.header_row)
+                meta = build_table_meta(sheet, header if self.header_row else None,
+                                        sample, header_row=self.header_row,
+                                        used_names=used)
+                if meta is not None:
+                    results.append((f, sheet, meta))
+        except Exception as e:  # noqa: BLE001 - 失败原因回传 UI
+            self.failed.emit(str(e))
+            return
+        self.loaded.emit(results)
+
+
 class ConfigPage(QWizardPage):
-    """步骤 2：逐 Sheet 确认表名、列配置（列名/类型/是否导入）并预览。"""
+    """步骤 2：逐 Sheet 确认表名、列配置（列名/类型/是否导入）并预览。
+
+    样本读取在 _SampleLoader 后台线程进行，读取期间禁用下一步。
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -83,12 +114,20 @@ class ConfigPage(QWizardPage):
         self.metas = {}      # (file, sheet) -> TableMeta
         self._loaded_key = None
         self._loading = False
+        self._loader = None
+        self._gen = 0        # 加载代号：仅接受最新一次的结果
 
         self.sheet_combo = QComboBox()
         self.sheet_combo.currentIndexChanged.connect(self._on_sheet_switched)
         self.table_edit = QLineEdit()
         self.header_check = QCheckBox("首行是表头")
         self.header_check.stateChanged.connect(self._on_header_toggled)
+
+        self.load_progress = QProgressBar()
+        self.load_progress.setRange(0, 0)   # 不确定进度（滚动条动画）
+        self.load_progress.hide()
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #b25000;")
 
         head = QHBoxLayout()
         head.addWidget(QLabel("Sheet："))
@@ -115,54 +154,76 @@ class ConfigPage(QWizardPage):
 
         layout = QVBoxLayout(self)
         layout.addLayout(head)
+        layout.addWidget(self.load_progress)
+        layout.addWidget(self.status_label)
         layout.addWidget(col_group, 2)
         layout.addWidget(preview_group, 3)
 
-    # --- 结构构建 ---
+    # --- 后台加载 ---
 
     def _entries(self):
         return [self.sheet_combo.itemData(i) for i in range(self.sheet_combo.count())]
 
-    def _build_metas(self):
-        entries = self._entries()
-        header_row = self.header_check.isChecked()
-        self.metas = {}
-        used = set()
-        for key in entries:
-            if key is None:
-                continue
-            f, sheet = key
-            header, sample = read_sample(f, sheet, header_row=header_row)
-            meta = build_table_meta(sheet, header if header_row else None,
-                                    sample, header_row=header_row,
-                                    used_names=used)
-            if meta is not None:
-                self.metas[key] = meta
-
     def initializePage(self):
+        entries = self.wizard().page(0).checked()
+        self._start_loader(entries, header_row=True)
+
+    def _start_loader(self, entries, header_row):
+        self._gen += 1
+        gen = self._gen
         self._loading = True
-        file_page = self.wizard().page(0)
-        entries = file_page.checked()
+        self.header_check.blockSignals(True)
+        self.header_check.setChecked(header_row)
+        self.header_check.blockSignals(False)
+        self.metas = {}
+        self._loaded_key = None
         self.sheet_combo.blockSignals(True)
         self.sheet_combo.clear()
-        for f, sheet in entries:
+        self.sheet_combo.blockSignals(False)
+        self.table_edit.clear()
+        self.column_table.setRowCount(0)
+        self.preview.setRowCount(0)
+        self.preview.setColumnCount(0)
+        self.load_progress.show()
+        self.status_label.setText("正在读取数据样本（后台线程，不阻塞界面）…")
+        self.completeChanged.emit()
+
+        loader = _SampleLoader(entries, header_row)
+        loader.loaded.connect(lambda res, g=gen: self._on_loaded(g, res))
+        loader.failed.connect(lambda msg, g=gen: self._on_load_failed(g, msg))
+        self._loader = loader  # 保引用防止线程被回收
+        loader.start()
+
+    def _on_loaded(self, gen, results):
+        if gen != self._gen:
+            return  # 过期结果（用户已返回重进）
+        self._loading = False
+        self.metas = {}
+        self.sheet_combo.blockSignals(True)
+        self.sheet_combo.clear()
+        for f, sheet, meta in results:
+            self.metas[(f, sheet)] = meta
             self.sheet_combo.addItem(sheet, (f, sheet))
         self.sheet_combo.blockSignals(False)
-        self.header_check.setChecked(True)
-        self._build_metas()
-        self._loading = False
+        self.load_progress.hide()
+        self.status_label.setText("")
         if self.sheet_combo.count():
             self._load_meta()
         self.completeChanged.emit()
 
-    # --- UI 与 TableMeta 同步 ---
+    def _on_load_failed(self, gen, message):
+        if gen != self._gen:
+            return
+        self._loading = False
+        self.load_progress.hide()
+        self.status_label.setText("读取失败：%s" % message)
+        self.completeChanged.emit()
 
     def _on_header_toggled(self):
-        if not self._loading and self.sheet_combo.count():
-            self._loading = True
-            self._build_metas()
-            self._loading = False
-            self._load_meta()
+        if self._loading or self.sheet_combo.count() == 0:
+            return
+        self._start_loader(self._entries(),
+                           header_row=self.header_check.isChecked())
 
     def _on_sheet_switched(self, _index):
         if not self._loading and self.sheet_combo.count():
@@ -232,6 +293,8 @@ class ConfigPage(QWizardPage):
         self.completeChanged.emit()
 
     def isComplete(self):
+        if self._loading or not self.sheet_combo.count():
+            return False
         meta = self.metas.get(self._current_key())
         return meta is not None and bool(meta.included_columns)
 

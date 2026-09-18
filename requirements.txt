@@ -1,5 +1,6 @@
 # 运行依赖
 openpyxl>=3.1        # 读写 xlsx
+lxml>=5.0            # openpyxl 的 C 解析器：大文件提速，且解析时释放 GIL，避免导入线程卡死 GUI
 PySide6>=6.6         # 桌面 GUI（LGPL）
 
 # 开发/测试
